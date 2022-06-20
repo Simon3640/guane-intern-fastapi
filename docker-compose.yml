@@ -1,0 +1,95 @@
+version: "3.3"
+
+services:
+  db:
+    container_name: "db"
+    image: mysql
+    restart: always
+ #   platform: linux/amd64
+    tty: true
+    environment:
+      MYSQL_DATABASE: dogs_db
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: password 
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./docker/mysql/initdb.d:/docker-entrypoint-initdb.d 
+      - ./docker/mysql/conf.d:/etc/mysql/conf.d 
+      - ./log/mysql:/var/log/mysql 
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "db", "-uuser", "-ppassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - local-net
+
+  # FastAPI
+  api:
+    container_name: "api"
+    build: ./docker/api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/usr/src/server
+    networks:
+      - local-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  redis:
+    container_name: "redis"
+    image: redis
+    restart: always
+ #   platform: linux/amd64
+    tty: true
+    environment:
+      REDIS_PASSWORD: password
+    ports:
+      - "6379:6379"
+    networks:
+      - local-net
+    depends_on:
+      db:
+        condition: service_healthy
+    
+
+  celery_worker:
+    container_name: "celery_worker"
+    build: ./docker/api
+    command: celery -A celery_worker.celery worker --loglevel=info
+    volumes:
+      - ./app:/usr/src/server
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+      - api
+    networks:
+      - local-net
+    
+  flower:
+    container_name: "flower"
+    build: ./docker/api
+    command: celery -A celery_worker.celery flower --port=5555
+    volumes:
+      - ./app:/usr/src/server
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - celery_worker
+    networks:
+      - local-net
+      
+
+
+networks:
+  local-net:
+    driver: bridge
